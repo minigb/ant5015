@@ -567,6 +567,9 @@ def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
       break
     converted_out.append([pitch, dur])
 
+  if len(converted_out) == 0:
+    return torch.LongTensor([[idx2pitch.index('start'), idx2dur.index('start')]])
+
   converted_out = torch.LongTensor(converted_out)
   assert converted_out.shape == pred.shape, f"{converted_out.shape} != {pred.shape}"
 
@@ -593,6 +596,8 @@ def convert_pitch_dur_to_note_representation(pitch_dur:torch.LongTensor):
   To convert torch tensor to numpy, you can use atensor.numpy()
   
   '''
+  import numpy as np
+
   start_timestep = 0
   velocity = 64
 
