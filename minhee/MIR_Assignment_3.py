@@ -539,7 +539,7 @@ def generate(model, random_seed=0):
     input_vec = cur_output
   
   if len(generated_note_sequence) == 0:
-    return torch.LongTensor([['start', 'start']])
+    return torch.LongTensor([[-1, -1]]) # TODO(minhee): Fix this
 
   return torch.LongTensor(generated_note_sequence)
 
@@ -559,12 +559,16 @@ def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
   '''
 
   converted_out = []
-  for i, (pitch_idx, dur_idx) in enumerate(pred):
+  for pitch_idx, dur_idx in pred:
+    if pitch_idx == -1 or dur_idx == -1:
+      break
     pitch, dur = idx2pitch[pitch_idx], idx2dur[dur_idx]
     if pitch == 'end' or dur == 'end':
       break
     converted_out.append([pitch, dur])
 
+  if len(converted_out) == 0:
+    return torch.LongTensor([[0, 0]]) # TODO(minhee): Fix this
   converted_out = torch.LongTensor(converted_out)
   assert converted_out.shape == pred.shape, f"{converted_out.shape} != {pred.shape}"
 
