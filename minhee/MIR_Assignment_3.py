@@ -533,15 +533,15 @@ def generate(model, random_seed=0):
 
   while True:
     cur_output, hidden = predict_single_step(model, input_vec, hidden)
-    generated_note_sequence.append(cur_output.squeeze().tolist())
-    input_vec = cur_output
-
     if is_end_token(model, cur_output):
       break
+    generated_note_sequence.append(cur_output.squeeze().tolist())
+    input_vec = cur_output
+  
+  if len(generated_note_sequence) == 0:
+    return torch.LongTensor([['start', 'start']])
 
-  assert len(generated_note_sequence) > 0, "Generated sequence has to have at least one note"
   return torch.LongTensor(generated_note_sequence)
-
 
 def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
   '''
@@ -561,18 +561,14 @@ def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
   converted_out = []
   for i, (pitch_idx, dur_idx) in enumerate(pred):
     pitch, dur = idx2pitch[pitch_idx], idx2dur[dur_idx]
-    converted_out.append([pitch_idx, dur_idx])
     if pitch == 'end' or dur == 'end':
       break
-
-  if len(converted_out) == 0:
-    return torch.LongTensor([[idx2pitch.index('start'), idx2dur.index('start')]])
+    converted_out.append([pitch, dur])
 
   converted_out = torch.LongTensor(converted_out)
   assert converted_out.shape == pred.shape, f"{converted_out.shape} != {pred.shape}"
 
   return converted_out
-
 def convert_pitch_dur_to_note_representation(pitch_dur:torch.LongTensor):
   '''
   This function takes pitch_dur (shape of [num_notes, 2]) and returns the corresponding note representation (shape of [num_notes, 4])
