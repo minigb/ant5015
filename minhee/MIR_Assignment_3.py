@@ -466,7 +466,6 @@ def predict_single_step(model, cur_input, prev_hidden):
 
   model.eval()
   with torch.no_grad():
-    # cur_input = torch.tensor(cur_input, dtype=torch.long)
     output = model.get_concat_embedding(cur_input)
     output, last_hidden = model.rnn(output, prev_hidden)
 
@@ -562,10 +561,9 @@ def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
   converted_out = []
   for i, (pitch_idx, dur_idx) in enumerate(pred):
     pitch, dur = idx2pitch[pitch_idx], idx2dur[dur_idx]
+    converted_out.append([pitch_idx, dur_idx])
     if pitch == 'end' or dur == 'end':
-      pred = pred[:i]
       break
-    converted_out.append([pitch, dur])
 
   if len(converted_out) == 0:
     return torch.LongTensor([[idx2pitch.index('start'), idx2dur.index('start')]])
