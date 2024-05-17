@@ -477,6 +477,7 @@ def predict_single_step(model, cur_input, prev_hidden):
     pitch_sampled = pitch_dist.squeeze().multinomial(num_samples=1, replacement=False)
     dur_sampled = dur_dist.squeeze().multinomial(num_samples=1, replacement=False)
     cur_output = torch.stack([pitch_sampled, dur_sampled], dim=-1).unsqueeze(0)
+    assert cur_output.shape == torch.Size([1,1,2]), f'{cur_output.shape} != [1,1,2]'
   
   return cur_output, last_hidden
 
@@ -530,12 +531,16 @@ def generate(model, random_seed=0):
   '''
   generated_note_sequence = []
   input_vec, hidden = get_initial_input_and_hidden_state(model, batch_size=1)
-  cur_output, hidden = predict_single_step(model, input_vec, hidden)
 
-  while not is_end_token(model, cur_output):
+  while True:
+    cur_output, hidden = predict_single_step(model, input_vec, hidden)
     generated_note_sequence.append(cur_output.squeeze().tolist())
-    cur_output, hidden = predict_single_step(model, cur_output, hidden)
+    input_vec = cur_output
 
+    if is_end_token(model, cur_output):
+      break
+
+  assert len(generated_note_sequence) > 0, "Generated sequence has to have at least one note"
   return torch.LongTensor(generated_note_sequence)
 
 
@@ -672,7 +677,6 @@ def main():
   padded_melody, _ = pad_packed_sequence(melody, batch_first=True)
 
   concat_embedding = model.get_concat_embedding(padded_melody)
-  print(f'Your concart_embedding: \n{concat_embedding}')
 
   assert concat_embedding.shape[:-1] == padded_melody.shape[:-1], "Num_batch and num_timestep of concat_embedding has to be the same with input melody"
   assert concat_embedding.shape[2] == embed_size * 2, "Error in size of embedding dimension"
@@ -714,10 +718,8 @@ def main():
   torch.manual_seed(0)
   prob_distribution = torch.softmax(torch.randn([10, 3]), dim=-1)
   correct_class = torch.randint(0,3, [10])
-  print(f"prob_distribution: \n{prob_distribution}, \n correct_class for each datasample: \n {correct_class.unsqueeze(1)}")
 
   loss = get_nll_loss(prob_distribution, correct_class)
-  print('Loss: ', loss)
   assert (torch.abs(loss-torch.Tensor([1.5020, 0.7572, 0.4797, 0.7693, 0.4563, 0.8718, 0.7973, 1.3412, 1.6403, 0.2423]))<1e-4).all(), "Error in loss value"
   model.cpu()
   optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
@@ -734,7 +736,6 @@ def main():
 
   batch_size = 2
   input_vec, initial_hidden = get_initial_input_and_hidden_state(model, batch_size=batch_size)
-  print(f'input_vec: \n{input_vec} \n initial_hidden: \n {initial_hidden}')
 
   assert input_vec.ndim == 3
   assert initial_hidden.ndim == 3
@@ -743,7 +744,6 @@ def main():
 
   input_vec, initial_hidden = get_initial_input_and_hidden_state(model, batch_size=1)
   out_note, last_hidden = predict_single_step(model, input_vec, initial_hidden)
-  print(f'out_note: \n{out_note} \n last_hidden: \n {last_hidden}')
 
   assert out_note.ndim == 3
   assert last_hidden.ndim == 3
@@ -757,7 +757,6 @@ def main():
   assert is_end_token(model, torch.LongTensor([[[2, 2]]])),  'This is end token'
   
   gen_out = generate(model)
-  print(f"gen_out: \n {gen_out}")
 
   assert isinstance(gen_out, torch.LongTensor), f"output of generate() has to be torch.LongTensor, not {type(gen_out)}"
   assert gen_out.ndim == 2, f"output of generate() has to be 2D tensor, not {gen_out.ndim}D tensor"
@@ -766,10 +765,8 @@ def main():
   
   converted_out = convert_idx_pred_to_origin(gen_out, model.idx2pitch, model.idx2dur)
   assert converted_out.shape == gen_out.shape
-  print(f"convted_out: \n {converted_out}")
 
   note_repr = convert_pitch_dur_to_note_representation(converted_out)
-  print(f"note_reprnote: \n {note_repr}")
   
 
 if __name__ == '__main__':
