@@ -21,7 +21,9 @@ def rnn_single_step(current_input:torch.Tensor, prev_hidden:torch.Tensor, hh_wei
   
   TODO: Complete this function
   '''
-  return 
+  current_hidden = torch.tanh(torch.matmul(ih_weight, current_input) + torch.matmul(hh_weight, prev_hidden) + bias)
+  
+  return current_hidden
 
 
 def initialize_hidden_state_for_single_batch(hidden_dim:int) -> torch.Tensor:
@@ -36,7 +38,9 @@ def initialize_hidden_state_for_single_batch(hidden_dim:int) -> torch.Tensor:
   
   TODO: Complete this function
   '''
-  return 
+  initial_hidden_state = torch.zeros(hidden_dim)
+
+  return initial_hidden_state
 
 
 def rnn_for_entire_timestep(input_seq:torch.Tensor, prev_hidden:torch.Tensor, hh_weight:torch.Tensor, ih_weight:torch.Tensor, bias:torch.Tensor) -> tuple:
@@ -48,6 +52,7 @@ def rnn_for_entire_timestep(input_seq:torch.Tensor, prev_hidden:torch.Tensor, hh
     prev_hidden: Hidden state from the previous time step. Has a shape of [hidden_dimension]
     hh_weight: Weight matrix for from hidden state to hidden state. Has a shape of [hidden_dimension, hidden_dimension]
     ih_weight: Weight matrix for from current input to hidden state. Has a shape of [input_dimension, hidden_dimension]
+    bias: Bias of RNN. Has a shape of [hidden_dimension]
 
   
   Return: tuple (output, final_hidden_state)
@@ -56,11 +61,17 @@ def rnn_for_entire_timestep(input_seq:torch.Tensor, prev_hidden:torch.Tensor, hh
     
   TODO: Complete this function using your 'rnn_single_step()'
   '''
-  
-  return
+  hidden_states = []
+  number_of_timestep = input_seq.shape[0]
+  for i in range(number_of_timestep):
+    prev_hidden = rnn_single_step(input_seq[i], prev_hidden, hh_weight, ih_weight, bias)
+    hidden_states.append(prev_hidden)
+  output = torch.stack(hidden_states)
+  return output, prev_hidden
+
 
 class CustomEmbeddingLayer(nn.Module):
-  def __init__(self, num_embeddings, embedding_dim):
+  def __init__(self, num_embeddings: int, embedding_dim: int):
     super().__init__()
     self.weight = torch.randn(num_embeddings, embedding_dim)
     
@@ -74,9 +85,10 @@ class CustomEmbeddingLayer(nn.Module):
     
     TODO: Complete this function using self.weight
     '''
+    out = self.weight[x]
     
-    return
-  
+    return out
+   
 class MelodyDataset:
   def __init__(self, muspy_dataset, vocabs=None):
     '''
@@ -115,7 +127,7 @@ class MelodyDataset:
   def __len__(self):
     return len(self.dataset)
   
-  def __getitem__(self, idx):
+  def __getitem__(self, idx:int):
     '''
     This dataset class returns melody information as a tensor with shape of [num_notes, 2 (pitch, duration)].
     
@@ -145,8 +157,19 @@ class MelodyDataset:
 
     TODO: Complete this function
     '''
+    note_rep = self.dataset[idx]
+    pitch_in_piece = note_rep[:, 1]
+    dur_in_piece = note_rep[:, 2]
+
+    start_idx_tensor = torch.LongTensor([self.pitch2idx['start'], self.dur2idx['start']])
+    end_idx_tensor = torch.LongTensor([self.pitch2idx['end'], self.dur2idx['end']])
+    pitch_and_duration_idx_tensor_list = [torch.LongTensor([self.pitch2idx[p], self.dur2idx[d]]) for p, d in zip(pitch_in_piece, dur_in_piece)]
     
-    return
+    melody = torch.stack([start_idx_tensor] + pitch_and_duration_idx_tensor_list)
+    shifted_melody = torch.stack(pitch_and_duration_idx_tensor_list + [end_idx_tensor])
+    
+    return melody, shifted_melody
+
 
 def pack_collate(raw_batch:list):
   '''
@@ -160,8 +183,14 @@ def pack_collate(raw_batch:list):
     packed_shifted_melody (torch.nn.utils.rnn.PackedSequence)
 
   TODO: Complete this function
-  '''  
-  return 
+  '''
+  melody_list = [melody for melody, _ in raw_batch]
+  shifted_melody_list = [shifted_melody for _, shifted_melody in raw_batch]
+
+  packed_melody = pack_sequence(melody_list, enforce_sorted=False)
+  packed_shifted_melody = pack_sequence(shifted_melody_list, enforce_sorted=False)
+  
+  return packed_melody, packed_shifted_melody
 
 
 class MelodyLanguageModel(nn.Module):
@@ -175,14 +204,17 @@ class MelodyLanguageModel(nn.Module):
     self.num_dur = len(self.idx2dur)
     self.num_layers = 3
     
-    
     '''
     TODO: Declare four modules. Please follow the name strictly.
       1) self.pitch_embedder: nn.Embedding layer that embed pitch category index to a vector with size of 'embed_size'
       2) self.dur_embedder = nn.Embedding layer that embed duration category index to a vector with size of 'embed_size'
       3) self.rnn = nn.GRU layer that takes concatenated_embedding and has a hidden size of 'hidden_size', num_layers of self.num_layers, and batch_first=True
       4) self.final_layer = nn.Linear layer that takes self.rnn's output and convert it to logits (that can be used as input of softmax) of pitch + duration
-    '''    
+    '''
+    self.pitch_embedder = nn.Embedding(self.num_pitch, self.embed_size)
+    self.dur_embedder = nn.Embedding(self.num_dur, self.embed_size)
+    self.rnn = nn.GRU(input_size=self.embed_size*2, hidden_size=self.hidden_size, num_layers=self.num_layers, batch_first=True)
+    self.final_layer = nn.Linear(self.hidden_size, self.num_pitch + self.num_dur)
     
   def get_concat_embedding(self, input_seq):
     '''
@@ -204,8 +236,16 @@ class MelodyLanguageModel(nn.Module):
     TODO: Complete this function using self.pitch_embedder and self.dur_embedder
     You can use torch.cat to concatenate two tensors or vectors
     '''
-    
-    return 
+    if len(input_seq.shape) == 2:
+      input_seq = input_seq.unsqueeze(0)
+
+    pitch_embedding = self.pitch_embedder(input_seq[:,:,0])
+    dur_embedding = self.dur_embedder(input_seq[:,:,1])
+
+    concat_embedding = torch.cat([pitch_embedding, dur_embedding], dim=-1)
+    assert concat_embedding.shape == torch.Size([input_seq.shape[0], input_seq.shape[1], self.embed_size * 2])
+
+    return concat_embedding
   
   
   def initialize_rnn(self, batch_size: int) -> torch.Tensor :
@@ -218,9 +258,7 @@ class MelodyLanguageModel(nn.Module):
     Return
       initial_hidden_state (torch.Tensor):
     '''
-    
     return torch.zeros([self.num_layers, batch_size, self.hidden_size])
-  
     
   
   def forward(self, input_seq:torch.LongTensor):
@@ -257,37 +295,51 @@ class MelodyLanguageModel(nn.Module):
     if isinstance(input_seq, torch.Tensor): # If input is an ordinary tensor
 
       # 1. Get concatenated_embeddings using self.get_concat_embedding
+      concatenated_embeddings = self.get_concat_embedding(input_seq)
       
       # 2. Put concatenated_embeddings to self.rnn.
       # Remember: RNN, GRU, LSTM returns two outputs
+      output, _ = self.rnn(concatenated_embeddings)
       
       # 3. Put rnn's output with a shape of [num_batch, num_timestep, hidden_size] to self.final_layer
+      logits = self.final_layer(output)
       
       # 4. Convert logits (output of self.final_layer) to pitch probability and duration probability
       # Caution! You have to get separately softmax-ed pitch and duration
       # Because you have to pick one pitch and one duration from the probability distribution
+      pitch_dist = torch.softmax(logits[:,:,:self.num_pitch], dim=-1)
+      dur_dist = torch.softmax(logits[:,:,self.num_pitch:], dim=-1)
 
-      pass # Delete this after you complete the code
+      return pitch_dist, dur_dist
+
     elif isinstance(input_seq, PackedSequence):      
       # 1. Get concatenated_embeddings using self.get_concat_embedding
       # To get concatenated_embeddings, You have to either pad_packed_sequence(input_seq, batch_first=True)
       # Or use input_seq.data, and then make new PackedSequence using concatenated_embeddings as data, and copy batch_lengths, sorted_indices, unsorted_indices.
+      padded_sequence, batch_lengths = pad_packed_sequence(input_seq, batch_first=True)
+      concatenated_embeddings = self.get_concat_embedding(padded_sequence)
+      packed_sequence_of_concatenated = pack_padded_sequence(concatenated_embeddings, batch_lengths, enforce_sorted = False, batch_first=True)
       
       # 2. Put concatenated embedding to self.rnn
+      output, _ = self.rnn(packed_sequence_of_concatenated)
       
       # 3. Put rnn output to self.final_layer to get probability logit for pitch and duration
       # Again, rnn's output is PackedSequence so you have to handle it
+      logits = self.final_layer(output.data)
       
       # 4. Convert logits to pitch probability and duration probability
       # Caution! You have to get separately softmax-ed pitch and duration
       # Because you have to pick one pitch and one duration from the probability distribution
+      pitch_dist = torch.softmax(logits[:,:self.num_pitch], dim=-1)
+      dur_dist = torch.softmax(logits[:,self.num_pitch:], dim=-1)
       
       # Return output as PackedSequence
-      pass # Delete this after you complete the code
+      pitch_dist_packed = PackedSequence(pitch_dist, packed_sequence_of_concatenated.batch_sizes, packed_sequence_of_concatenated.sorted_indices, packed_sequence_of_concatenated.unsorted_indices)
+      dur_dist_packed = PackedSequence(dur_dist, packed_sequence_of_concatenated.batch_sizes, packed_sequence_of_concatenated.sorted_indices, packed_sequence_of_concatenated.unsorted_indices)
+
+      return pitch_dist_packed, dur_dist_packed
     else:
-      print(f"Unrecognized input type: {type(input_seq)}")
-    
-    return
+      raise ValueError(f"Unrecognized input type: {type(input_seq)}")
 
 def get_nll_loss(prob_distribution, correct_class):
   '''
@@ -319,8 +371,10 @@ def get_nll_loss(prob_distribution, correct_class):
   '''
   assert prob_distribution.dim() == 2 and correct_class.dim() == 1, "Let's assume we only take 2D tensor for prob_distribution and 1D tensor for correct_class"
   # Write your code from here
-  
-  return
+  loss = -torch.log(prob_distribution[torch.arange(prob_distribution.shape[0]), correct_class])
+  assert loss.shape == correct_class.shape
+
+  return loss
 
 def get_loss_for_single_batch(model, batch, device):
   '''
@@ -332,7 +386,7 @@ def get_loss_for_single_batch(model, batch, device):
     device (str): cuda or cpu. In which device to calculate the batch
     
   Return:
-    loss (torch.Tensor): Calculated mean loss for given model and batch
+    loss (torch.Tensor): Calculated mean loss for given model and batch. Has a shape of 0D tensor
     
   TODO: Complete this function using get_nll_loss().
   Now you have to return the mean loss of every data sample in the batch 
@@ -341,12 +395,29 @@ def get_loss_for_single_batch(model, batch, device):
   Then you can take average of pitch_loss and duration_loss
   
   Important Tip: If you are using PackedSequence, you can feed PackedSequence.data directly to get_nll_loss.
-  It makes the implementation much easier, because it doesn't need to reshape probabilty distribution to 2D and correct class to 1D.
+  It makes the implementation much easier, because it doesn't need to reshape probabilty distribution and correct_class
   '''
+  melody_batch, shifted_melody_batch = batch
   
+  melody_batch = melody_batch.to(device)
+  shifted_melody_batch = shifted_melody_batch.to(device)
+  model.to(device)
 
-  return
+  pitch_dist, dur_dist = model(melody_batch)
 
+  if isinstance(pitch_dist, torch.Tensor):
+    pitch_loss = get_nll_loss(pitch_dist, shifted_melody_batch[:,0])
+    dur_loss = get_nll_loss(dur_dist, shifted_melody_batch[:,1])
+    loss = torch.mean(pitch_loss) + torch.mean(dur_loss)
+  elif isinstance(pitch_dist, PackedSequence):
+    pitch_loss = get_nll_loss(pitch_dist.data, shifted_melody_batch.data[:,0])
+    dur_loss = get_nll_loss(dur_dist.data, shifted_melody_batch.data[:,1])
+    loss = torch.mean(pitch_loss) + torch.mean(dur_loss)
+  else:
+    raise ValueError(f"Unrecognized input type: {type(pitch_dist)}")
+
+  return loss
+  
 def get_initial_input_and_hidden_state(model, batch_size=1):
   '''
   This function generates initial input vector and hidden state for model's GRU
@@ -357,18 +428,19 @@ def get_initial_input_and_hidden_state(model, batch_size=1):
   You also have to initial hidden state for the model's RNN.
   In uni-directional RNN(or GRU), hidden state of RNN has to be a zero tensor with shape of (num_layers, batch_size, hidden_size)
 
-  
   Argument:
     model (MelodyLanguageModel)
     
   Returns:
-    initial_input_vec (torch.Tensor): Has a shape of [batch_size, 1 (timestep), 2]
+    initial_input_vec (torch.Tensor): Has a shape of [batch_size, 1 (timestep), 2], dtype=torch.long
     initial_hidden (torch.Tensor): Has a shape of [num_layers, bach_size, hidden_size]
     
   TODO: Complete this function
   '''
-  
-  return
+  initial_input_vec = torch.Tensor([[model.pitch2idx['start'], model.dur2idx['start']]] * batch_size).unsqueeze(1).to(torch.long)
+  initial_hidden = torch.zeros([model.num_layers, batch_size, model.hidden_size])
+
+  return initial_input_vec, initial_hidden
 
 
 def predict_single_step(model, cur_input, prev_hidden):
@@ -388,8 +460,25 @@ def predict_single_step(model, cur_input, prev_hidden):
   input_seq → self.get_concat_embedding → self.rnn → self.final_layer → torch.softmax for [pitch, duration] → sampled [pitch, duration]
 
   TODO: Complete this function
+  Caution: You have to use torch.multinomial(replacement=False) to sample a note from the probability distribution.
+    You can also use replacement=True, but for the automatic evaulation, please use replacement=False.
   '''
-  return 
+
+  model.eval()
+  with torch.no_grad():
+    # cur_input = torch.tensor(cur_input, dtype=torch.long)
+    output = model.get_concat_embedding(cur_input)
+    output, last_hidden = model.rnn(output, prev_hidden)
+
+    logits = model.final_layer(output)
+    pitch_dist = torch.softmax(logits[:,:,:model.num_pitch], dim=-1)
+    dur_dist = torch.softmax(logits[:,:,model.num_pitch:], dim=-1)
+
+    pitch_sampled = pitch_dist.squeeze().multinomial(num_samples=1, replacement=False)
+    dur_sampled = dur_dist.squeeze().multinomial(num_samples=1, replacement=False)
+    cur_output = torch.stack([pitch_sampled, dur_sampled], dim=-1).unsqueeze(0)
+  
+  return cur_output, last_hidden
 
 
 def is_end_token(model, cur_output):
@@ -397,7 +486,7 @@ def is_end_token(model, cur_output):
   During the generation, there is a possibility that the generated note predicted 'end' token for either pitch or duration.
   (In fact, model can even estimate 'start' token during the generation even though it has very low probability)
   
-  Using information among (model.pitch2idx, model.dur2idx, model.idx2pitch, model.idx2dur, model.num_pitch, model.num_dur), check whether 
+  Using information among (model.pitch2idx, model.dur2idx, model.idx2pitch, model.idx2dur) to check whether the given cur_output has 'end' token or not.
   
   Arguments:
     model (MelodyLanguageModel)
@@ -409,9 +498,11 @@ def is_end_token(model, cur_output):
                           
   TODO: Complete this function
   '''
-  
-  
-  return 
+  assert cur_output.shape == torch.Size([1,1,2]), "cur_output has to have shape of [1,1,2]"
+  pitch_idx, dur_idx = cur_output[:,:,0], cur_output[:,:,1]
+  pitch, dur = model.idx2pitch[pitch_idx.item()], model.idx2dur[dur_idx.item()]
+
+  return (pitch in ['start', 'end'] or dur in ['start', 'end'])
 
 
 def generate(model, random_seed=0):
@@ -437,8 +528,15 @@ def generate(model, random_seed=0):
   '''
   Write your code from here
   '''
+  generated_note_sequence = []
+  input_vec, hidden = get_initial_input_and_hidden_state(model, batch_size=1)
+  cur_output, hidden = predict_single_step(model, input_vec, hidden)
 
-  return
+  while not is_end_token(model, cur_output):
+    generated_note_sequence.append(cur_output.squeeze().tolist())
+    cur_output, hidden = predict_single_step(model, cur_output, hidden)
+
+  return torch.LongTensor(generated_note_sequence)
 
 
 def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
@@ -455,8 +553,19 @@ def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
     
   TODO: Complete this function
   '''
-    
-  return 
+
+  converted_out = []
+  for i, (pitch_idx, dur_idx) in enumerate(pred):
+    pitch, dur = idx2pitch[pitch_idx], idx2dur[dur_idx]
+    if pitch == 'end' or dur == 'end':
+      pred = pred[:i]
+      break
+    converted_out.append([pitch, dur])
+
+  converted_out = torch.LongTensor(converted_out)
+  assert converted_out.shape == pred.shape, f"{converted_out.shape} != {pred.shape}"
+
+  return converted_out
 
 def convert_pitch_dur_to_note_representation(pitch_dur:torch.LongTensor):
   '''
@@ -479,8 +588,17 @@ def convert_pitch_dur_to_note_representation(pitch_dur:torch.LongTensor):
   To convert torch tensor to numpy, you can use atensor.numpy()
   
   '''
-  
-  return
+  start_timestep = 0
+  velocity = 64
+
+  note_repr = []
+  for pitch, dur in pitch_dur:
+    note_repr.append([start_timestep, pitch, dur, velocity])
+    start_timestep += dur
+
+  note_repr = np.array(note_repr)
+
+  return note_repr
 
 
 def main():
