@@ -573,6 +573,8 @@ def convert_idx_pred_to_origin(pred:torch.Tensor, idx2pitch:list, idx2dur:list):
   assert converted_out.shape == pred.shape, f"{converted_out.shape} != {pred.shape}"
 
   return converted_out
+
+
 def convert_pitch_dur_to_note_representation(pitch_dur:torch.LongTensor):
   '''
   This function takes pitch_dur (shape of [num_notes, 2]) and returns the corresponding note representation (shape of [num_notes, 4])
