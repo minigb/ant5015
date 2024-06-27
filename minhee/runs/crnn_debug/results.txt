@@ -1,4 +1,4 @@
-                            loss frame_loss                : 0.139 +- 0.047
+                            loss frame_loss                : 0.142 +- 0.046
                             loss onset_loss                : 0.013 +- 0.007
                            frame frame_precision           : 0.000 +- 0.000
                            frame frame_recall              : 0.000 +- 0.000
